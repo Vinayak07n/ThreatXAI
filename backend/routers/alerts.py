@@ -23,6 +23,15 @@ def _get_max_alerts() -> int:
         return 500
 
 
+def _get_min_campaign_size() -> int:
+    """Read min_campaign_size from runtime config (used by clusters page)."""
+    try:
+        from backend.main import _app_config
+        return max(1, int(_app_config.get("min_campaign_size", 2)))
+    except Exception:
+        return 2
+
+
 def _enforce_alert_cap(db: Session):
     """Purge oldest alerts when DB exceeds the configured cap. Benign alerts purged first."""
     max_alerts = _get_max_alerts()
@@ -95,6 +104,7 @@ async def get_alerts(
             "prediction": a.prediction,
             "label": a.label,
             "confidence": a.confidence,
+            "attack_probability": a.attack_probability,
             "cluster_id": a.cluster_id,
             "cluster_label": a.cluster_label,
             "cluster_similarity": a.cluster_similarity,
@@ -107,17 +117,35 @@ async def get_alerts(
 @router.get("/stats/summary")
 async def alert_stats(db: Session = Depends(get_db)):
     max_alerts = _get_max_alerts()
+    min_campaign_size = _get_min_campaign_size()
     total = db.query(func.count(Alert.id)).scalar()
     attacks = db.query(func.count(Alert.id)).filter(Alert.prediction == 1).scalar()
     benign = total - attacks
-    clusters = db.query(func.count(Alert.cluster_id.distinct())).filter(
-        Alert.cluster_id.isnot(None)
+    unassigned_attacks = db.query(func.count(Alert.id)).filter(
+        Alert.prediction == 1,
+        Alert.cluster_id.is_(None),
     ).scalar()
+
+    # Keep campaign count aligned with /clusters endpoint behavior (DB source of truth).
+    raw_clusters = db.query(func.count(Alert.cluster_id.distinct())).filter(
+        Alert.cluster_id.isnot(None),
+        Alert.prediction == 1,
+    ).scalar()
+    visible_clusters = (
+        db.query(Alert.cluster_id)
+        .filter(Alert.cluster_id.isnot(None), Alert.prediction == 1)
+        .group_by(Alert.cluster_id)
+        .having(func.count(Alert.id) >= min_campaign_size)
+        .count()
+    )
     return {
         "total_alerts": total,
         "attacks": attacks,
         "benign": benign,
-        "unique_clusters": clusters,
+        "unassigned_attacks": unassigned_attacks,
+        "unique_clusters": visible_clusters,
+        "unique_clusters_total": raw_clusters,
+        "min_campaign_size": min_campaign_size,
         "attack_rate": round(attacks / total, 3) if total > 0 else 0,
         "max_alerts": max_alerts,
         "storage_usage": f"{total}/{max_alerts}",
@@ -156,6 +184,7 @@ async def get_alert_detail(alert_id: str, db: Session = Depends(get_db)):
         "prediction": alert.prediction,
         "label": alert.label,
         "confidence": alert.confidence,
+        "attack_probability": alert.attack_probability,
         "cluster_id": alert.cluster_id,
         "cluster_label": alert.cluster_label,
         "cluster_similarity": alert.cluster_similarity,

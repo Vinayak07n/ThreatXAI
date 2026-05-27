@@ -154,6 +154,37 @@ class EDACEngine:
     def __init__(self, feature_names: list):
         self.feature_names = feature_names
         self.clusters: dict[str, EDACCluster] = {}
+        self._anomalous_label_counter = 0
+
+    def __setstate__(self, state):
+        """Backward compatibility for older pickled engines."""
+        self.__dict__.update(state)
+        if "_anomalous_label_counter" not in self.__dict__:
+            self._anomalous_label_counter = 0
+
+    def _next_anomalous_label(self) -> str:
+        self._anomalous_label_counter += 1
+        return f"{ATTACK_LABEL_TEMPLATES['default']} #{self._anomalous_label_counter}"
+
+    def _assign_new_cluster_label(self, cluster: EDACCluster) -> str:
+        base = cluster.infer_label()
+        if base == ATTACK_LABEL_TEMPLATES["default"]:
+            return self._next_anomalous_label()
+        return base
+
+    def _refresh_existing_cluster_label(self, cluster: EDACCluster) -> str:
+        """
+        Keep stable anomalous suffix labels while allowing specific labels
+        to replace generic ones when centroid matures.
+        """
+        inferred = cluster.infer_label()
+        current = cluster.label or ""
+        if inferred == ATTACK_LABEL_TEMPLATES["default"]:
+            # Preserve previously assigned numbered anomalous label
+            if current.startswith(ATTACK_LABEL_TEMPLATES["default"]):
+                return current
+            return self._next_anomalous_label()
+        return inferred
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """Returns cosine similarity in [0, 1]. Higher = more similar."""
@@ -190,7 +221,7 @@ class EDACEngine:
             cluster.update_centroid(shap_vector)
             cluster.alert_ids.append(alert_id)
             # Re-infer label as centroid evolves
-            cluster.label = cluster.infer_label()
+            cluster.label = self._refresh_existing_cluster_label(cluster)
             log.debug(f"Alert {alert_id} → Cluster {best_cluster_id} "
                       f"(sim={best_similarity:.3f}, label={cluster.label})")
             return {
@@ -222,7 +253,7 @@ class EDACEngine:
                         similarity: float) -> dict:
         cluster_id = f"cluster_{str(uuid.uuid4())[:8]}"
         cluster = EDACCluster(cluster_id, shap_vector, self.feature_names)
-        cluster.label = cluster.infer_label()
+        cluster.label = self._assign_new_cluster_label(cluster)
         cluster.alert_ids.append(alert_id)
         self.clusters[cluster_id] = cluster
         log.info(f"★ New Cluster Created: {cluster_id} | {cluster.label} | "
@@ -286,7 +317,7 @@ class EDACEngine:
             centroid = sample[mask].mean(axis=0)
             cluster_id = f"cluster_{str(uuid.uuid4())[:8]}"
             cluster = EDACCluster(cluster_id, centroid, self.feature_names)
-            cluster.label = cluster.infer_label()
+            cluster.label = self._assign_new_cluster_label(cluster)
             cluster.member_count = int(mask.sum())
             self.clusters[cluster_id] = cluster
 

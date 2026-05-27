@@ -289,6 +289,8 @@ export default function AlertDetail() {
         : (shapFeatures.length > 0 
             ? shapFeatures.map(([feature, value]) => ({ feature, weight: value })) 
             : []);
+    const hasRawAttackProbability = alert.attack_probability != null;
+    const isLegacyConfidenceUnknown = !hasRawAttackProbability && (alert.confidence == null || alert.confidence <= 0);
 
     return (
         <>
@@ -307,10 +309,20 @@ export default function AlertDetail() {
                         {alert.label}
                     </span>
                     <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                        Confidence: <strong style={{ color: alert.confidence > 0.8 ? 'var(--danger)' : 'var(--success)' }}>
-                            {Math.round(alert.confidence * 100)}%
+                        Final Decision Confidence: <strong style={{ color: 'var(--text-primary)' }}>
+                            {isLegacyConfidenceUnknown ? 'N/A (Legacy)' : `${Math.round((alert.confidence ?? 0) * 100)}%`}
                         </strong>
                     </span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        Raw Attack Probability: <strong style={{ color: 'var(--danger)' }}>
+                            {alert.attack_probability == null ? 'N/A' : `${Math.round(alert.attack_probability * 100)}%`}
+                        </strong>
+                    </span>
+                    {!hasRawAttackProbability && (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 280, textAlign: 'right' }}>
+                            Legacy alert row: raw attack probability was not stored for this record.
+                        </span>
+                    )}
                 </div>
             </div>
 
@@ -369,7 +381,7 @@ export default function AlertDetail() {
                                 Computes exact contribution of each feature using Shapley values.
                                 <span style={{ color: '#f87171' }}> Red</span> = pushes toward <em>Attack</em>,
                                 <span style={{ color: '#67e8f9' }}> Blue</span> = pushes toward <em>Benign</em>.
-                                Values are <strong>additive</strong> — they sum to the final prediction score.
+                                Values are <strong>additive</strong> — they sum to the raw model score before final threshold/consensus decision logic.
                             </div>
                             <SHAPWaterfall features={shapFeatures} />
                         </>

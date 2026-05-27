@@ -46,7 +46,7 @@ def _get_dnn_background():
 def compute_shap_values(model, X: np.ndarray, model_type: str = "xgboost") -> np.ndarray:
     """
     Returns SHAP values for X.
-    model_type: 'xgboost' | 'rf' | 'dnn'
+    model_type: 'xgboost' | 'rf' | 'dnn' | 'hybrid'
     """
     import shap
 
@@ -56,15 +56,17 @@ def compute_shap_values(model, X: np.ndarray, model_type: str = "xgboost") -> np
         # For binary classification RF returns list of 2 arrays
         if isinstance(shap_values, list):
             shap_values = shap_values[1]  # class=1 (attack)
-    elif model_type == "dnn":
+    elif model_type in ("dnn", "hybrid"):
         # Use cached background dataset (not the input instance!)
         bg = _get_dnn_background()
         if bg is None:
-            log.warning("No background data for DNN SHAP — returning zeros")
+            log.warning("No background data for DNN/Hybrid SHAP — returning zeros")
             return np.zeros_like(X)
-        explainer = shap.KernelExplainer(
-            lambda x: model.predict(x, verbose=0).flatten(), bg
-        )
+        if model_type == "dnn":
+            predict_fn = lambda x: model.predict(x, verbose=0).flatten()
+        else:
+            predict_fn = lambda x: model.predict_proba(x)[:, 1]
+        explainer = shap.KernelExplainer(predict_fn, bg)
         shap_values = explainer.shap_values(X, nsamples=100)
     else:
         raise ValueError(f"Unknown model_type: {model_type}")

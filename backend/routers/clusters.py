@@ -6,9 +6,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from backend.db.session import get_db
 from backend.db.models import Alert
-from backend.services.model_service import get_edac_engine
 
 router = APIRouter(prefix="/clusters", tags=["EDAC Clusters"])
+
+
+def _get_min_campaign_size() -> int:
+    try:
+        from backend.main import _app_config
+        return max(1, int(_app_config.get("min_campaign_size", 2)))
+    except Exception:
+        return 2
 
 
 def _clusters_from_db(db: Session) -> list:
@@ -25,7 +32,7 @@ def _clusters_from_db(db: Session) -> list:
             func.avg(Alert.cluster_similarity).label("avg_similarity"),
             func.group_concat(Alert.alert_id).label("alert_ids"),
         )
-        .filter(Alert.cluster_id.isnot(None))
+        .filter(Alert.cluster_id.isnot(None), Alert.prediction == 1)
         .group_by(Alert.cluster_id)
         .all()
     )
@@ -67,18 +74,10 @@ def _clusters_from_db(db: Session) -> list:
 
 @router.get("")
 async def get_all_clusters(db: Session = Depends(get_db)):
-    """Returns all EDAC clusters with semantic attack labels and top SHAP features."""
-    try:
-        edac = get_edac_engine()
-        clusters = edac.get_all_clusters()
-        if clusters:
-            clusters.sort(key=lambda x: x["member_count"], reverse=True)
-            return {"count": len(clusters), "clusters": clusters}
-    except Exception:
-        pass
-
-    # Fallback: reconstruct from database alerts
+    """Returns campaign clusters reconstructed from persisted alerts (source of truth for UI)."""
     clusters = _clusters_from_db(db)
+    min_size = _get_min_campaign_size()
+    clusters = [c for c in clusters if c["member_count"] >= min_size]
     clusters.sort(key=lambda x: x["member_count"], reverse=True)
     return {
         "count": len(clusters),
@@ -89,17 +88,10 @@ async def get_all_clusters(db: Session = Depends(get_db)):
 
 @router.get("/stats/summary")
 async def cluster_stats(db: Session = Depends(get_db)):
-    # Try in-memory first
-    clusters = []
-    try:
-        edac = get_edac_engine()
-        clusters = edac.get_all_clusters()
-    except Exception:
-        pass
-
-    # Fallback to DB
-    if not clusters:
-        clusters = _clusters_from_db(db)
+    # Use persisted alerts so stats always match campaigns shown in UI.
+    clusters = _clusters_from_db(db)
+    min_size = _get_min_campaign_size()
+    clusters = [c for c in clusters if c["member_count"] >= min_size]
 
     total_alerts = sum(c["member_count"] for c in clusters)
     label_counts = {}
@@ -115,17 +107,10 @@ async def cluster_stats(db: Session = Depends(get_db)):
 
 @router.get("/{cluster_id}")
 async def get_cluster(cluster_id: str, db: Session = Depends(get_db)):
-    # Try in-memory first
-    try:
-        edac = get_edac_engine()
-        cluster = edac.get_cluster(cluster_id)
-        if cluster:
-            return cluster
-    except Exception:
-        pass
-
-    # Fallback to DB
+    # Fetch from persisted alerts for consistency with list/stats views.
     clusters = _clusters_from_db(db)
+    min_size = _get_min_campaign_size()
+    clusters = [c for c in clusters if c["member_count"] >= min_size]
     for c in clusters:
         if c["cluster_id"] == cluster_id:
             return c

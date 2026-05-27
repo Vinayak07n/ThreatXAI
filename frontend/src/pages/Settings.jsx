@@ -6,6 +6,7 @@ const MODEL_MAP = {
     'xgboost': 'XGBoost (Recommended)',
     'rf': 'Random Forest',
     'dnn': 'DNN',
+    'hybrid': 'Hybrid Ensemble',
 };
 const MODEL_KEYS = Object.keys(MODEL_MAP);
 
@@ -15,6 +16,7 @@ export default function Settings({ pollingInterval, setPollingInterval }) {
 
     const [selectedModel, setSelectedModel] = useState('xgboost');
     const [edacThreshold, setEdacThreshold] = useState(80);
+    const [minCampaignSize, setMinCampaignSize] = useState(2);
     const [savedModel, setSavedModel] = useState(false);
     const [loadingConfig, setLoadingConfig] = useState(true);
 
@@ -28,6 +30,8 @@ export default function Settings({ pollingInterval, setPollingInterval }) {
                 if (cfg.default_model) setSelectedModel(cfg.default_model);
                 if (cfg.edac_similarity_threshold != null)
                     setEdacThreshold(Math.round(cfg.edac_similarity_threshold * 100));
+                if (cfg.min_campaign_size != null)
+                    setMinCampaignSize(Number(cfg.min_campaign_size));
                 if (cfg.max_alerts != null) setAlertLimit(cfg.max_alerts);
             })
             .catch(() => {})
@@ -47,6 +51,7 @@ export default function Settings({ pollingInterval, setPollingInterval }) {
             await updateConfig({
                 default_model: selectedModel,
                 edac_similarity_threshold: edacThreshold / 100,
+                min_campaign_size: minCampaignSize,
             });
             setSavedModel(true);
             setTimeout(() => setSavedModel(false), 2500);
@@ -155,12 +160,24 @@ export default function Settings({ pollingInterval, setPollingInterval }) {
                                         Higher = tighter clusters (fewer, more specific campaigns). Lower = broader clusters.
                                     </div>
                                 </div>
+                                <div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Minimum Campaign Size</div>
+                                    <input
+                                        value={minCampaignSize}
+                                        onChange={e => setMinCampaignSize(Math.max(1, Math.min(20, Number(e.target.value) || 2)))}
+                                        type="number" min="1" max="20"
+                                        style={inputStyle}
+                                    />
+                                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                                        Campaigns with fewer alerts are hidden from the campaigns view to reduce noise.
+                                    </div>
+                                </div>
                                 <button className="btn btn-primary" style={{ marginTop: 4 }} onClick={handleSaveModelConfig}>
                                     {savedModel ? '✓ Saved!' : 'Save Model Config'}
                                 </button>
                                 {savedModel && (
                                     <div style={{ padding: '8px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--success)' }}>
-                                        ✓ Model set to <strong>{MODEL_MAP[selectedModel]}</strong>, EDAC threshold set to <strong>{edacThreshold}%</strong>
+                                        ✓ Model set to <strong>{MODEL_MAP[selectedModel]}</strong>, EDAC threshold <strong>{edacThreshold}%</strong>, Min campaign size <strong>{minCampaignSize}</strong>
                                     </div>
                                 )}
                             </div>
@@ -230,8 +247,8 @@ export default function Settings({ pollingInterval, setPollingInterval }) {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
                             {[
                                 ['Version', '1.0.0'],
-                                ['Dataset', 'CIC-IDS2017'],
-                                ['Primary Model', 'XGBoost'],
+                                ['Dataset', 'ThreatXAI-SynthShield-v1'],
+                                ['Primary Model', 'XGBoost / Hybrid'],
                                 ['Explainability', 'SHAP + LIME'],
                                 ['Novel Feature', 'EDAC (SHAP Vector Clustering)'],
                                 ['Backend', 'FastAPI + SQLite'],

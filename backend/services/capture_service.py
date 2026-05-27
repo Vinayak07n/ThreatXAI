@@ -24,6 +24,30 @@ _alerts_generated = 0
 _stop_event = threading.Event()
 _default_model = "xgboost"
 
+# Hardcoded per-model decision thresholds to reduce live false positives.
+MODEL_ATTACK_THRESHOLDS = {
+    "xgboost": 0.70,
+    "rf": 0.72,
+    "dnn": 0.75,
+    "hybrid": 0.88,
+}
+
+# Extra hard guardrail for live capture to suppress false positives on normal traffic.
+LIVE_ATTACK_MIN_RAW_PROBA = 0.9999
+
+
+def _get_attack_threshold(model_type: str) -> float:
+    return float(MODEL_ATTACK_THRESHOLDS.get(model_type, 0.5))
+
+
+def _model_attack_proba(model, model_type: str, features_scaled: np.ndarray) -> float:
+    if model_type == "dnn" or not hasattr(model, "predict_proba"):
+        raw = model.predict(features_scaled.reshape(1, -1), verbose=0)
+        if raw.shape[-1] == 1:
+            return float(raw[0][0])
+        return float(raw[0][1])
+    return float(model.predict_proba(features_scaled.reshape(1, -1))[0][1])
+
 
 def get_capture_status() -> dict:
     return {
@@ -78,7 +102,7 @@ def _capture_loop(on_alert: Optional[Callable]):
     global _packets_captured, _alerts_generated
 
     try:
-        from scapy.all import sniff, IP, TCP, UDP
+        from scapy.all import sniff, IP, IPv6, TCP, UDP
     except ImportError:
         log.warning("⚠ Scapy not available — using simulated capture for demo.")
         _simulated_capture_loop(on_alert)
@@ -95,11 +119,17 @@ def _capture_loop(on_alert: Optional[Callable]):
 
         _packets_captured += 1
 
-        if IP not in pkt:
+        has_ipv4 = IP in pkt
+        has_ipv6 = IPv6 in pkt
+        if not has_ipv4 and not has_ipv6:
             return
 
-        src_ip = pkt[IP].src
-        dst_ip = pkt[IP].dst
+        if has_ipv4:
+            src_ip = pkt[IP].src
+            dst_ip = pkt[IP].dst
+        else:
+            src_ip = pkt[IPv6].src
+            dst_ip = pkt[IPv6].dst
         protocol = "TCP" if TCP in pkt else ("UDP" if UDP in pkt else "OTHER")
 
         # Flow key (bidirectional)
@@ -182,12 +212,21 @@ def _extract_features(packets: list) -> Optional[np.ndarray]:
             flow_bytes_s = 0
             flow_pkts_s = 0
 
+        def _iat_stats(ts: list[float]) -> tuple[float, float, float, float, float]:
+            if len(ts) < 2:
+                return 0.0, 0.0, 0.0, 0.0, 0.0
+            deltas = [ts[i + 1] - ts[i] for i in range(len(ts) - 1)]
+            total = sum(deltas) * 1e6
+            mean = statistics.mean(deltas) * 1e6
+            std = statistics.stdev(deltas) * 1e6 if len(deltas) > 1 else 0.0
+            return total, mean, std, max(deltas) * 1e6, min(deltas) * 1e6
+
         # IAT (inter-arrival times)
-        iats = [timestamps[i+1]-timestamps[i] for i in range(len(timestamps)-1)]
-        iat_mean = statistics.mean(iats) * 1e6 if iats else 0
-        iat_std = statistics.stdev(iats) * 1e6 if len(iats) > 1 else 0
-        iat_max = max(iats) * 1e6 if iats else 0
-        iat_min = min(iats) * 1e6 if iats else 0
+        _, iat_mean, iat_std, iat_max, iat_min = _iat_stats(timestamps)
+        fwd_ts = [float(p.time) for p in fwd_pkts]
+        bwd_ts = [float(p.time) for p in bwd_pkts]
+        fwd_iat_total, fwd_iat_mean, fwd_iat_std, fwd_iat_max, fwd_iat_min = _iat_stats(fwd_ts)
+        bwd_iat_total, bwd_iat_mean, bwd_iat_std, bwd_iat_max, bwd_iat_min = _iat_stats(bwd_ts)
 
         features = [
             max(fwd_lens),                                    # Fwd Packet Length Max
@@ -197,10 +236,10 @@ def _extract_features(packets: list) -> Optional[np.ndarray]:
             flow_bytes_s,                                     # Flow Bytes/s
             flow_pkts_s,                                      # Flow Packets/s
             iat_mean, iat_std, iat_max, iat_min,             # Flow IAT
-            sum(timestamps[:len(timestamps)//2]) * 1e6,      # Fwd IAT Total
-            iat_mean, iat_std, iat_max, iat_min,             # Fwd IAT
-            sum(timestamps[len(timestamps)//2:]) * 1e6,      # Bwd IAT Total
-            iat_mean, iat_std, iat_max, iat_min,             # Bwd IAT
+            fwd_iat_total,                                   # Fwd IAT Total
+            fwd_iat_mean, fwd_iat_std, fwd_iat_max, fwd_iat_min,  # Fwd IAT
+            bwd_iat_total,                                   # Bwd IAT Total
+            bwd_iat_mean, bwd_iat_std, bwd_iat_max, bwd_iat_min,  # Bwd IAT
             int(bool(psh_count)), 0, 0, 0,                   # PSH/URG flags
             len(fwd_pkts) * 20, len(bwd_pkts) * 20,         # Header lengths
             flow_pkts_s / 2, flow_pkts_s / 2,               # Fwd/Bwd Packets/s
@@ -263,26 +302,44 @@ def _run_inference(features: np.ndarray, src_ip: str, dst_ip: str,
         model = models.get(_default_model) or models.get("xgboost") or list(models.values())[0]
         model_type = _default_model if _default_model in models else list(models.keys())[0]
 
-        # Handle DNN (Keras Sequential) vs sklearn-style models
-        if model_type == "dnn" or not hasattr(model, 'predict_proba'):
-            # Keras models use .predict() which returns sigmoid/softmax output
-            raw = model.predict(features_scaled.reshape(1, -1), verbose=0)
-            if raw.shape[-1] == 1:
-                proba = float(raw[0][0])  # single sigmoid output
-            else:
-                proba = float(raw[0][1])  # softmax, take class 1
-        else:
-            proba = float(model.predict_proba(features_scaled.reshape(1, -1))[0][1])
-        prediction = int(proba >= 0.5)
+        proba = _model_attack_proba(model, model_type, features_scaled)
+        # Keep probabilities bounded for stable confidence math/display.
+        proba = max(0.0, min(1.0, float(proba)))
+        attack_threshold = _get_attack_threshold(model_type)
+        prediction = int(proba >= attack_threshold)
+        votes = 1 if prediction == 1 else 0
+        total_voters = 1
+        min_votes = 1
+
+        # False-positive guardrail for live capture:
+        # require multi-model agreement before promoting to Attack.
+        if prediction == 1:
+            voters = [m for m in ["xgboost", "rf", "hybrid"] if m in models]
+            if model_type not in voters and model_type in models:
+                voters.append(model_type)
+            votes = 0
+            for voter in voters:
+                p = _model_attack_proba(models[voter], voter, features_scaled)
+                if p >= _get_attack_threshold(voter):
+                    votes += 1
+            total_voters = len(voters)
+            min_votes = len(voters) if len(voters) >= 3 else (2 if len(voters) >= 2 else 1)
+            if votes < min_votes:
+                prediction = 0
+
+        # Final live-capture gate: even after consensus, require extreme raw attack probability.
+        if prediction == 1 and proba < LIVE_ATTACK_MIN_RAW_PROBA:
+            prediction = 0
 
         alert_id = str(uuid.uuid4())
 
         # SHAP explanation for ALL traffic (both benign and attack)
         shap_exp = {}
         cluster_info = {}
+        shap_vector = np.array([])
         try:
             shap_exp = get_shap_explanation(model, features_scaled, feature_names, model_type)
-            shap_vector = np.array(shap_exp.get("shap_vector", []))
+            shap_vector = np.array(shap_exp.get("shap_vector", []), dtype=np.float32)
 
             # EDAC clustering only for attacks
             if prediction == 1 and len(shap_vector) > 0:
@@ -291,8 +348,32 @@ def _run_inference(features: np.ndarray, src_ip: str, dst_ip: str,
         except Exception as e:
             log.warning(f"SHAP/EDAC error: {e}")
 
+        # Ensure every attack gets a campaign assignment (fallback to scaled feature vector).
+        if prediction == 1 and not cluster_info.get("cluster_id"):
+            try:
+                edac = get_edac_engine()
+                if edac is not None:
+                    if shap_vector.size == 0:
+                        shap_vector = np.array(features_scaled, dtype=np.float32)
+                    cluster_info = edac.assign_alert(shap_vector, alert_id)
+            except Exception as e:
+                log.warning(f"EDAC fallback assignment failed: {e}")
+
         if prediction == 1:
             _alerts_generated += 1
+
+        benign_votes = max(total_voters - votes, 0)
+        attack_vote_ratio = votes / max(total_voters, 1)
+        benign_vote_ratio = benign_votes / max(total_voters, 1)
+
+        if prediction == 1:
+            label_confidence = max(proba, attack_vote_ratio)
+        else:
+            # Benign confidence is label-aligned and never contradictory with final decision context.
+            label_confidence = max(1.0 - proba, benign_vote_ratio)
+
+        # Numeric safety and UX guardrail.
+        label_confidence = max(0.0, min(1.0, float(label_confidence)))
 
         alert_data = {
             "alert_id": alert_id,
@@ -301,7 +382,8 @@ def _run_inference(features: np.ndarray, src_ip: str, dst_ip: str,
             "protocol": protocol,
             "prediction": prediction,
             "label": "Attack" if prediction == 1 else "Benign",
-            "confidence": round(float(proba), 4),
+            "confidence": round(float(label_confidence), 4),
+            "attack_probability": round(float(proba), 4),
             "cluster_id": cluster_info.get("cluster_id"),
             "cluster_label": cluster_info.get("label"),
             "cluster_similarity": cluster_info.get("similarity_score"),
@@ -352,12 +434,17 @@ def _simulated_capture_loop(on_alert: Optional[Callable]):
             "prediction": prediction,
             "label": profile["label"],
             "confidence": profile["confidence"],
-            "cluster_id": f"cluster_{random.choice(['a1b2', 'c3d4', 'e5f6'])}",
-            "cluster_label": random.choice(["SYN Flood Campaign", "Port Scan Campaign", "Brute Force Campaign"]),
-            "cluster_similarity": round(random.uniform(0.80, 0.99), 2),
+            "cluster_id": None,
+            "cluster_label": None,
+            "cluster_similarity": None,
             "shap_top_features": shap_tops,
             "is_live_capture": True,
         }
+
+        if prediction == 1:
+            alert_data["cluster_id"] = f"cluster_{random.choice(['a1b2', 'c3d4', 'e5f6'])}"
+            alert_data["cluster_label"] = random.choice(["SYN Flood Campaign", "Port Scan Campaign", "Brute Force Campaign"])
+            alert_data["cluster_similarity"] = round(random.uniform(0.80, 0.99), 2)
 
         if on_alert:
             on_alert(alert_data)

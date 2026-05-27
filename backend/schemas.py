@@ -10,7 +10,7 @@ class PredictRequest(BaseModel):
     src_ip: Optional[str] = Field(default=None, description="Source IP address")
     dst_ip: Optional[str] = Field(default=None, description="Destination IP address")
     protocol: Optional[str] = Field(default=None, description="Protocol (TCP, UDP, ICMP, etc)")
-    model_type: str = Field(default="xgboost", description="xgboost | rf | dnn")
+    model_type: str = Field(default="xgboost", description="xgboost | rf | dnn | hybrid")
 
 
 class SHAPFeature(BaseModel):
@@ -26,7 +26,8 @@ class LIMEFeature(BaseModel):
 class PredictResponse(BaseModel):
     prediction: int           # 0=Benign, 1=Attack
     label: str                # "Benign" or "Attack"
-    confidence: float         # probability of attack class
+    confidence: float         # final decision confidence (label-aligned)
+    attack_probability: Optional[float] = None  # raw model P(attack)
     model_used: str
     alert_id: Optional[str] = None
     cluster_id: Optional[str] = None
@@ -38,6 +39,20 @@ class ExplainRequest(BaseModel):
     features: List[float]
     alert_id: Optional[str] = None
     model_type: str = "xgboost"
+
+
+class AnalystChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    question: str
+    alert_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    model_type: str = "xgboost"
+
+
+class AnalystChatResponse(BaseModel):
+    session_id: str
+    answer: str
+    context_used: Dict[str, Any]
 
 
 class SHAPResponse(BaseModel):
@@ -65,6 +80,7 @@ class AlertOut(BaseModel):
     prediction: int
     label: str
     confidence: float
+    attack_probability: Optional[float]
     cluster_id: Optional[str]
     cluster_label: Optional[str]
     shap_top_features: Optional[List[SHAPFeature]]

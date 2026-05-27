@@ -1,7 +1,7 @@
 // pages/Dashboard.jsx — Live monitoring feed
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { getAlerts, getAlertStats, deleteAlert } from '../api/client';
+import { getAlerts, getAlertStats, deleteAlert, downloadAlertsReport } from '../api/client';
 
 function ConfidenceBar({ value }) {
     const pct = Math.round(value * 100);
@@ -22,9 +22,11 @@ export default function Dashboard({ capturing, setAlertCount, pollingInterval = 
     const [filter, setFilter] = useState('all');
     const [isRealData, setIsRealData] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
+    const [downloadingReport, setDownloadingReport] = useState(false);
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const clusterFilter = searchParams.get('cluster');
+    const alertFeedRef = useRef(null);
 
     const fetchAlerts = useCallback(async () => {
         try {
@@ -87,6 +89,47 @@ export default function Dashboard({ capturing, setAlertCount, pollingInterval = 
         .filter(a => filter === 'all' || (filter === 'attack' ? a.prediction === 1 : a.prediction === 0))
         .filter(a => !clusterFilter || a.cluster_id === clusterFilter);
 
+    const scrollToAlertFeed = () => {
+        setTimeout(() => {
+            alertFeedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+    };
+
+    const handleStatCardClick = (type) => {
+        if (type === 'campaigns') {
+            navigate('/clusters');
+            return;
+        }
+        if (type === 'attacks') {
+            setSearchParams({});
+            setFilter('attack');
+            scrollToAlertFeed();
+            return;
+        }
+        if (type === 'benign') {
+            setSearchParams({});
+            setFilter('benign');
+            scrollToAlertFeed();
+        }
+    };
+
+    const handleDownloadAlertsReport = async () => {
+        if (downloadingReport) return;
+        setDownloadingReport(true);
+        try {
+            const prediction = filter === 'attack' ? 1 : filter === 'benign' ? 0 : null;
+            await downloadAlertsReport({
+                prediction,
+                clusterId: clusterFilter || null,
+                limit: 2000,
+            });
+        } catch {
+            // keep UI clean on download failures
+        } finally {
+            setDownloadingReport(false);
+        }
+    };
+
     return (
         <>
             <div className="page-header">
@@ -124,17 +167,17 @@ export default function Dashboard({ capturing, setAlertCount, pollingInterval = 
                         <div className="stat-value">{displayStats.total_alerts.toLocaleString()}</div>
                         <div className="stat-label">Total Flows Analyzed</div>
                     </div>
-                    <div className="stat-card danger">
+                    <div className="stat-card danger" style={{ cursor: 'pointer' }} onClick={() => handleStatCardClick('attacks')} title="View attack alerts">
                         <div className="stat-icon danger">🚨</div>
                         <div className="stat-value" style={{ color: 'var(--danger)' }}>{displayStats.attacks.toLocaleString()}</div>
                         <div className="stat-label">Attacks Detected</div>
                     </div>
-                    <div className="stat-card success">
+                    <div className="stat-card success" style={{ cursor: 'pointer' }} onClick={() => handleStatCardClick('benign')} title="View benign alerts">
                         <div className="stat-icon success">✅</div>
                         <div className="stat-value" style={{ color: 'var(--success)' }}>{displayStats.benign.toLocaleString()}</div>
                         <div className="stat-label">Benign Traffic</div>
                     </div>
-                    <div className="stat-card warning">
+                    <div className="stat-card warning" style={{ cursor: 'pointer' }} onClick={() => handleStatCardClick('campaigns')} title="Open attack campaigns">
                         <div className="stat-icon warning">🔗</div>
                         <div className="stat-value" style={{ color: 'var(--warning)' }}>{displayStats.unique_clusters}</div>
                         <div className="stat-label">Attack Campaigns</div>
@@ -142,7 +185,7 @@ export default function Dashboard({ capturing, setAlertCount, pollingInterval = 
                 </div>
 
                 {/* Alert Table */}
-                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div className="card" style={{ padding: 0, overflow: 'hidden' }} ref={alertFeedRef}>
                     <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div className="card-title" style={{ margin: 0 }}>
                             🚨 Alert Feed
@@ -158,6 +201,15 @@ export default function Dashboard({ capturing, setAlertCount, pollingInterval = 
                                     {f.charAt(0).toUpperCase() + f.slice(1)}
                                 </button>
                             ))}
+                            <button
+                                className="btn btn-ghost"
+                                style={{ marginLeft: 8, fontSize: 11, padding: '6px 10px' }}
+                                onClick={handleDownloadAlertsReport}
+                                disabled={downloadingReport}
+                                title="Download alerts report as PDF"
+                            >
+                                {downloadingReport ? 'Preparing...' : '⬇ Alerts PDF'}
+                            </button>
                         </div>
                     </div>
 

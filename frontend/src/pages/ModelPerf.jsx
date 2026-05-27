@@ -9,6 +9,7 @@ const MODEL_COLORS = {
     XGBoost: '#6366f1',
     'Random Forest': '#22c55e',
     DNN: '#f59e0b',
+    'Hybrid Ensemble': '#8b5cf6',
 };
 
 function MetricCard({ label, value, color }) {
@@ -63,7 +64,7 @@ export default function ModelPerf() {
                 <div className="page-header">
                     <div>
                         <h1 className="page-title">📊 Model Performance</h1>
-                        <p className="page-subtitle">CIC-IDS2017 evaluation results</p>
+                        <p className="page-subtitle">ThreatXAI synthetic dataset evaluation results</p>
                     </div>
                 </div>
                 <div className="page-content">
@@ -94,7 +95,7 @@ export default function ModelPerf() {
             <div className="page-header">
                 <div>
                     <h1 className="page-title">📊 Model Performance</h1>
-                    <p className="page-subtitle">Evaluated on CIC-IDS2017 test set (20% stratified split)</p>
+                    <p className="page-subtitle">Evaluated on ThreatXAI-SynthShield-v1 test split (20% stratified)</p>
                 </div>
                 <div className="tabs" style={{ marginBottom: 0 }}>
                     {metrics.map(m => (
@@ -127,7 +128,7 @@ export default function ModelPerf() {
                         <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={comparisonData} margin={{ top: 8, right: 8, left: 0, bottom: 24 }}>
                                 <XAxis dataKey="metric" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                                <YAxis domain={[99, 100]} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} unit="%" tickCount={6} />
+                                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} unit="%" tickCount={6} />
                                 <Tooltip
                                     formatter={v => [`${v.toFixed(2)}%`]}
                                     contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8 }}
@@ -182,11 +183,11 @@ export default function ModelPerf() {
                 </div>
 
                 <div className="card" style={{ marginTop: 16 }}>
-                    <div className="card-title">📁 Dataset — CIC-IDS2017</div>
+                    <div className="card-title">📁 Dataset — ThreatXAI-SynthShield-v1</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
                         {[
-                            { label: 'Attack Classes', value: '15' },
-                            { label: 'Features', value: '78' },
+                            { label: 'Attack Classes', value: '7' },
+                            { label: 'Features', value: '68' },
                             { label: 'Train Split', value: '80%' },
                             { label: 'Test Split', value: '20%' },
                         ].map(item => (

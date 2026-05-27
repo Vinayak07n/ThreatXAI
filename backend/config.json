@@ -1,5 +1,6 @@
 {
-    "default_model": "dnn",
-    "edac_similarity_threshold": 0.75,
+    "default_model": "xgboost",
+    "edac_similarity_threshold": 0.8,
+    "min_campaign_size": 2,
     "max_alerts": 300
 }

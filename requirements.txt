@@ -33,6 +33,9 @@ matplotlib
 seaborn
 plotly
 
+# LLM & Chat
+groq
+
 # Utilities
 joblib
 tqdm

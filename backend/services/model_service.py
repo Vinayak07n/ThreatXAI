@@ -76,6 +76,27 @@ def get_metrics() -> list:
         return json.load(f)
 
 
+def get_cicids_metrics() -> list:
+    path = os.path.join(MODELS_DIR, "metrics_cicids.json")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+
+def get_metrics_comparison() -> dict:
+    return {
+        "current_dataset": {
+            "name": "ThreatXAI-SynthShield-v1",
+            "metrics": get_metrics(),
+        },
+        "cicids_dataset": {
+            "name": "CIC-IDS2017",
+            "metrics": get_cicids_metrics(),
+        },
+    }
+
+
 def get_attack_names() -> list:
     path = os.path.join(MODELS_DIR, "attack_names.json")
     if not os.path.exists(path):
@@ -98,6 +119,11 @@ def load_all_models():
     if os.path.exists(rf_path):
         _models["rf"] = joblib.load(rf_path)
         log.info("✓ Random Forest loaded")
+
+    hybrid_path = os.path.join(MODELS_DIR, "hybrid_model.pkl")
+    if os.path.exists(hybrid_path):
+        _models["hybrid"] = joblib.load(hybrid_path)
+        log.info("✓ Hybrid Ensemble loaded")
 
     try:
         import tensorflow as tf

@@ -5,13 +5,17 @@ import Dashboard from './pages/Dashboard';
 import Clusters from './pages/Clusters';
 import AlertDetail from './pages/AlertDetail';
 import ModelPerf from './pages/ModelPerf';
+import MetricsComparison from './pages/MetricsComparison';
 import Settings from './pages/Settings';
+import AnalystChat from './pages/AnalystChat';
 import { startCapture, stopCapture, getCaptureStatus } from './api/client';
 
 const NAV = [
   { id: 'dashboard', label: 'Live Dashboard', icon: '📡', path: '/' },
   { id: 'clusters', label: 'Attack Campaigns', icon: '🔗', path: '/clusters', badge: 'NEW', badgeColor: 'green' },
   { id: 'performance', label: 'Model Performance', icon: '📊', path: '/performance' },
+  { id: 'metrics-compare', label: 'Comparison Metrics', icon: '📈', path: '/metrics-comparison' },
+  { id: 'analyst-chat', label: 'Analyst Chat', icon: '🧠', path: '/analyst-chat', badge: 'NEW', badgeColor: 'green' },
   { id: 'settings', label: 'Settings', icon: '⚙️', path: '/settings' },
 ];
 
@@ -112,6 +116,8 @@ function AppLayout() {
           <Route path="/clusters" element={<Clusters />} />
           <Route path="/alerts/:alertId" element={<AlertDetail />} />
           <Route path="/performance" element={<ModelPerf />} />
+          <Route path="/metrics-comparison" element={<MetricsComparison />} />
+          <Route path="/analyst-chat" element={<AnalystChat />} />
           <Route path="/settings" element={<Settings pollingInterval={pollingInterval} setPollingInterval={setPollingInterval} />} />
         </Routes>
       </div>

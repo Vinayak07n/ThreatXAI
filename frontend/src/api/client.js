@@ -64,8 +64,33 @@ export const getCaptureStatus = () =>
 export const getMetrics = () =>
     api.get('/metrics').then(r => r.data);
 
+export const getMetricsComparison = () =>
+    api.get('/metrics/comparison').then(r => r.data);
+
 export const getHealth = () =>
     api.get('/health').then(r => r.data);
+
+// Analyst chat (RAG + Groq)
+export const listChatSessions = (limit = 50) =>
+    api.get(`/analyst/sessions?limit=${limit}`).then(r => r.data);
+
+export const createChatSession = (title = 'SOC Analyst Session') =>
+    api.post('/analyst/sessions', { title }).then(r => r.data);
+
+export const getChatMessages = (sessionId) =>
+    api.get(`/analyst/sessions/${sessionId}/messages`).then(r => r.data);
+
+export const deleteChatSession = (sessionId) =>
+    api.delete(`/analyst/sessions/${sessionId}`).then(r => r.data);
+
+export const askAnalyst = ({ sessionId = null, question, alertId = null, clusterId = null, modelType = 'xgboost' }) =>
+    api.post('/analyst/chat', {
+        session_id: sessionId,
+        question,
+        alert_id: alertId,
+        cluster_id: clusterId,
+        model_type: modelType,
+    }).then(r => r.data);
 
 // Configuration
 export const getConfig = () =>
@@ -73,5 +98,35 @@ export const getConfig = () =>
 
 export const updateConfig = (updates) =>
     api.post('/config', updates).then(r => r.data);
+
+function downloadBlob(blob, filename) {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+}
+
+export const downloadAlertsReport = ({ prediction = null, clusterId = null, limit = 1000 } = {}) =>
+    api.get('/reports/alerts/pdf', {
+        params: {
+            prediction,
+            cluster_id: clusterId,
+            limit,
+        },
+        responseType: 'blob',
+    }).then(r => {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadBlob(r.data, `threatxai-alerts-${ts}.pdf`);
+    });
+
+export const downloadChatReport = (sessionId) =>
+    api.get(`/reports/chat/${sessionId}/pdf`, { responseType: 'blob' }).then(r => {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadBlob(r.data, `threatxai-chat-${sessionId}-${ts}.pdf`);
+    });
 
 export default api;
